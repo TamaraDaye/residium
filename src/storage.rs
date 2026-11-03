@@ -5,18 +5,15 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tokio::fs::File;
 
-struct Engine {
-    memtable: MemTable,
-}
 
 pub enum Entry {
     Tombstone(Tombstone),
     Ptr(DiskPointer),
 }
 
-/// In-memory indexes derived from the append-only packfiles.
 /// The packfiles are the durable source of truth for this local storage layer.
-struct MemTable {
+/// In-memory indexes derived from the append-only packfiles.
+pub struct MemTable {
     pub chunk_index: RwLock<BTreeMap<ChunkKey, DiskPointer>>,
     pub object_index: RwLock<BTreeMap<ObjectKey, Entry>>,
     pub active_pack: PackFile,
@@ -52,7 +49,7 @@ impl ObjectKey {
 }
 
 struct ObjectChunks {
-    chunks: Vec<Chunk>,
+    chunks: Vec<ChunkKey>,
 }
 
 
@@ -60,29 +57,32 @@ struct Object {
     key: ObjectKey,
     chunks: ObjectChunks,
     manifest: ObjectManifest,
-    object_size: u64,
-    hash: [u8; 32],
 }
 
 
 struct ObjectManifest {
     mime_type: String,
     creation_time: u64,
-    version: u64,
+    object_size: u64,
+    checksum: [u8; 32],
 }
 
 pub struct DiskPointer {
     segment_id: u32,
     offset: u64,
     record_size: u64,
+    writer_id: u32
 }
 
 pub struct PackFile {
     pack: File,
     segment_id: u32,
+    /// Bytes written in the active segment; the next append position.
     offset: u64,
-    size: u32,
-    segment_size: u32,
+    /// Current total size of this packfile. Keep it at or below `segment_size`.
+    size: u64,
+    /// Configured maximum size for this packfile segment.
+    segment_size: u64,
 }
 
 pub struct Tombstone {
