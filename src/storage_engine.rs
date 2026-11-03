@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::sync::RwLock;
@@ -55,12 +55,12 @@ struct DiskPointer {
 pub struct ChunkID {
     hash: [u8; 32],
     length: usize,
-    chunk: Vec<u8>,
+    chunk: Bytes,
 }
 
 
 impl ChunkID {
-    pub fn new(chunk: Vec<u8>) -> Self {
+    pub fn new(chunk: Bytes) -> Self {
         let hash = *blake3::hash(&chunk).as_bytes();
         let length = chunk.len();
         Self {

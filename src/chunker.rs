@@ -1,16 +1,21 @@
 #![allow(unused)]
 use blake3::Hasher;
-use bytes::{BufMut, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::net::TcpStream; 
-use std::sync::LazyLock;
-use crate::storage_engine::ChunkID; 
+use bytes::{BufMut, Bytes, BytesMut};
+use std::{io, sync::LazyLock};
+use tokio::{
+    io::AsyncReadExt,
+    net::TcpStream,
+    sync::mpsc,
+};
 
+const MIN_CHUNK: usize = 1 << 18; // 256 KiB
+const INITIAL_CHUNK_CAPACITY: usize = 1 << 20; // 1 MiB
+const MAX_CHUNK: usize = 4 << 20; // 4 MiB
 
-const MIN_CHUNK: usize = 1 << 18; // 256KB 
-const AVG_CHUNK: usize = 1 << 20; // 1 MiB
-const MAX_CHUNK: usize = 4 << 20; // 4MiB
+const READ_BUFFER_CAPACITY: usize = 1 << 18; // 256 KiB
+
 const AVG_BITS: usize = 20;
+const MASK: u64 = (1u64 << AVG_BITS) - 1;
 
 fn generate_gear_table() -> [u64; 256] {
     std::array::from_fn(|byte| {
@@ -24,7 +29,7 @@ fn generate_gear_table() -> [u64; 256] {
         u64::from_be_bytes(
             digest.as_bytes()[..8]
                 .try_into()
-                .expect("SHA-256 digest contains at least 8 bytes"),
+                .expect("BLAKE3 digest contains at least 8 bytes"),
         )
     })
 }
@@ -32,53 +37,80 @@ fn generate_gear_table() -> [u64; 256] {
 static GEAR_TABLE: LazyLock<[u64; 256]> = LazyLock::new(generate_gear_table);
 
 fn update_gear_hash(hash: u64, byte: u8) -> u64 {
-    hash.wrapping_shl(1).wrapping_add(GEAR_TABLE[byte as usize])
-
+    hash.wrapping_shl(1)
+        .wrapping_add(GEAR_TABLE[byte as usize])
 }
 
-fn is_chunk_boundary(fp: u64, mask: u64) -> bool {
-    fp & mask == 0
+fn is_chunk_boundary(fp: u64) -> bool {
+    fp & MASK == 0
 }
 
-pub async fn chunk(mut conn: TcpStream) {
+pub async fn chunk(
+    mut conn: TcpStream,
+    tx: mpsc::Sender<Bytes>,
+) -> io::Result<()> {
     let mut fingerprint: u64 = 0;
-    let mut chunk_length: usize = 0;
-    let mut chunk = BytesMut::with_capacity(AVG_CHUNK);
-    let mut read_buf = BytesMut::with_capacity(1 << 18);
-    let mut read: usize = 0;
+
+    let mut chunk = BytesMut::with_capacity(INITIAL_CHUNK_CAPACITY);
+    let mut read_buf = BytesMut::with_capacity(READ_BUFFER_CAPACITY);
 
     loop {
-        let n = read_bytes(&mut read_buf, &mut conn).await;
+        let n = read_bytes(&mut read_buf, &mut conn).await?;
 
-        if n  == 0 {
-            break
+        if n == 0 {
+            break;
         }
 
-        for byte in &read_buf[read..]{
-            fingerprint = update_gear_hash(fingerprint, *byte);
+        for i in 0..n {
+            let byte = read_buf[i];
 
-            if chunk.len() <= MIN_CHUNK {
-                continue;
-            }
+            chunk.put_u8(byte);
+            fingerprint = update_gear_hash(fingerprint, byte);
 
-            // if is_chunk_boundary(fingerprint, mask) {
-            //     let chunkid =  ChunkID::new(chunk, chunk_length);
-            // }
+            let chunk_len = chunk.len();
 
-            if chunk .len() >= MAX_CHUNK {
+            let boundary =
+                (chunk_len >= MIN_CHUNK && is_chunk_boundary(fingerprint))
+                || chunk_len >= MAX_CHUNK;
+
+            if boundary {
                 let completed = chunk.split().freeze();
-                let chunkid =  ChunkID::new(completed.to_vec());
-            } 
-            chunk.put_u8(*byte);
 
+                fingerprint = 0;
+
+                tx.send(completed)
+                    .await
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "chunk consumer closed",
+                        )
+                    })?;
+            }
         }
 
-        read += n
-
+        read_buf.clear();
     }
+
+    if !chunk.is_empty() {
+        let completed = chunk.freeze();
+
+        tx.send(completed)
+            .await
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "chunk consumer closed",
+                )
+            })?;
+    }
+
+    Ok(())
 }
 
-
-pub async fn read_bytes(buffer: &mut BytesMut, stream: &mut TcpStream) -> usize{
-    stream.read_buf(buffer).await.unwrap()
+pub async fn read_bytes(
+    buffer: &mut BytesMut,
+    stream: &mut TcpStream,
+) -> io::Result<usize> {
+    stream.read_buf(buffer).await
 }
