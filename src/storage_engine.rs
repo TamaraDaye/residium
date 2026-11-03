@@ -6,77 +6,116 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tokio::fs::File;
 
-const SEGMENT_ROLLOVER: u64 = 64 << 20;
-
 struct Engine {
     memtable: MemTable,
-    current_segment_id: String, 
-    current_write_offset: u64
+    current_segment_id: String,
+    current_write_offset: u64,
+}
+
+
+pub struct Wal {
+    size: usize,
+    enabled: bool,
+    version: usize,
+    manager: Option<WalManager>,
+}
+
+pub struct WalManager {
+    file: File,
+    blocks: u32,
+    active_block: u32,
+    block_size: usize,
+}
+
+pub enum Entry {
+    Tombstone(Tombstone), 
+    Ptr(DiskPointer)
 }
 
 struct MemTable {
-    pub index: RwLock<BTreeMap<ChunkID, DiskPointer>>,
+    pub chunk_index: RwLock<BTreeMap<ChunkKey, DiskPointer>>,
+    pub object_index: RwLock<BTreeMap<ObjectKey, Entry>>, 
     pub wal: File,
-    pub active_pack: File,
+    pub active_pack: PackFile,
 }
 
 impl MemTable {
     fn new() -> Self {
         todo!()
     }
-
-
 }
 
-struct RecordFrame {
+pub struct RecordFrame {
     magic_number: Vec<u8>,
+    format_version: u8,
     record_type: u8,
     flags: u8,
     payload_length: u32,
     hash: Vec<u8>,
 }
 
-struct Inode {
+struct ObjectKey {
+    key_length: u32,
     version: u8,
     object_size: u64,
-    chunk_count: u32,
-    chunk_id: Vec<ChunkID>,
-    mime_type: String,
-    creation_time: DateTime<Utc>,
     hash: Vec<u8>,
 }
 
-struct DiskPointer {
+struct ObjectChunks {
+    chunk_count: u32,
+    chunks: Option<Vec<ChunkKey>>,
+} 
+
+
+struct Object {
+    key: ObjectKey ,
+    chunk: ObjectChunks, 
+    manifest: ObjectManifest
+}
+
+
+struct ObjectManifest {
+    mime_type: String,
+    creation_time: u64,
+}
+
+pub struct DiskPointer {
+    segment_id: u32, 
+    offset: u64, 
+    record_size: u64
+}
+
+pub struct PackFile {
+    pack: File,
     segment_id: u32,
     offset: u64,
     size: u32,
+    segment_size: u32,
 }
 
-pub struct ChunkID {
+pub struct Tombstone {
+    key_length: u32, 
+    key: Vec<u8>, 
+    deletion_time: u64
+}
+
+pub struct ChunkKey {
     hash: [u8; 32],
     length: usize,
+}
+
+pub struct Chunk {
+    key: ChunkKey,
     chunk: Bytes,
 }
 
-
-impl ChunkID {
+impl ChunkKey {
     pub fn new(chunk: Bytes) -> Self {
         let hash = *blake3::hash(&chunk).as_bytes();
         let length = chunk.len();
         Self {
-            hash, 
-            length, 
-            chunk
+            hash,
+            length,
         }
     }
-}
-
-struct Slicer {
-    ring_buffer: RingBuffer,
-}
-
-struct RingBuffer {}
-
-struct Pipeline {
-    buffer: Vec<u8>,
 }
