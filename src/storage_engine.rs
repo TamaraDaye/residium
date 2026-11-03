@@ -1,41 +1,24 @@
 #![allow(unused)]
 
-use bytes::{Bytes, BytesMut};
-use chrono::{DateTime, Utc};
+use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tokio::fs::File;
 
 struct Engine {
     memtable: MemTable,
-    current_segment_id: String,
-    current_write_offset: u64,
-}
-
-
-pub struct Wal {
-    size: usize,
-    enabled: bool,
-    version: usize,
-    manager: Option<WalManager>,
-}
-
-pub struct WalManager {
-    file: File,
-    blocks: u32,
-    active_block: u32,
-    block_size: usize,
 }
 
 pub enum Entry {
-    Tombstone(Tombstone), 
-    Ptr(DiskPointer)
+    Tombstone(Tombstone),
+    Ptr(DiskPointer),
 }
 
+/// In-memory indexes derived from the append-only packfiles.
+/// The packfiles are the durable source of truth for this local storage layer.
 struct MemTable {
     pub chunk_index: RwLock<BTreeMap<ChunkKey, DiskPointer>>,
-    pub object_index: RwLock<BTreeMap<ObjectKey, Entry>>, 
-    pub wal: File,
+    pub object_index: RwLock<BTreeMap<ObjectKey, Entry>>,
     pub active_pack: PackFile,
 }
 
@@ -45,44 +28,53 @@ impl MemTable {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordFrame {
-    magic_number: Vec<u8>,
+    magic_number: [u8; 4],
     format_version: u8,
-    record_type: u8,
-    flags: u8,
+    record_type: RecordType,
+    flags: u16,
     payload_length: u32,
-    hash: Vec<u8>,
+    hash: [u8; 32],
 }
 
-struct ObjectKey {
-    key_length: u32,
-    version: u8,
-    object_size: u64,
-    hash: Vec<u8>,
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ObjectKey(String);
+
+impl ObjectKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 struct ObjectChunks {
-    chunk_count: u32,
-    chunks: Option<Vec<ChunkKey>>,
-} 
+    chunks: Vec<Chunk>,
+}
 
 
 struct Object {
-    key: ObjectKey ,
-    chunk: ObjectChunks, 
-    manifest: ObjectManifest
+    key: ObjectKey,
+    chunks: ObjectChunks,
+    manifest: ObjectManifest,
+    object_size: u64,
+    hash: [u8; 32],
 }
 
 
 struct ObjectManifest {
     mime_type: String,
     creation_time: u64,
+    version: u64,
 }
 
 pub struct DiskPointer {
-    segment_id: u32, 
-    offset: u64, 
-    record_size: u64
+    segment_id: u32,
+    offset: u64,
+    record_size: u64,
 }
 
 pub struct PackFile {
@@ -94,14 +86,23 @@ pub struct PackFile {
 }
 
 pub struct Tombstone {
-    key_length: u32, 
-    key: Vec<u8>, 
-    deletion_time: u64
+    key: ObjectKey,
+    deletion_time: u64,
+    version: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ChunkKey {
     hash: [u8; 32],
     length: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RecordType {
+    Chunk = 1,
+    ObjectManifest = 2,
+    Tombstone = 3,
 }
 
 pub struct Chunk {
