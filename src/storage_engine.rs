@@ -1,13 +1,11 @@
 #![allow(unused)]
 
+use bytes::BytesMut;
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tokio::fs::File;
 
-const MIN_CHUNK: u32 = 1 << 8;
-const AVG_CHUNK: u32 = 1 << 20;
-const MAX_CHUNK: u32 = 4 << 20;
 const SEGMENT_ROLLOVER: u64 = 64 << 20;
 
 struct Engine {
@@ -54,10 +52,23 @@ struct DiskPointer {
     size: u32,
 }
 
-struct ChunkID {
-    hash: Vec<u8>,
-    length: u64,
+pub struct ChunkID {
+    hash: [u8; 32],
+    length: usize,
     chunk: Vec<u8>,
+}
+
+
+impl ChunkID {
+    pub fn new(chunk: Vec<u8>) -> Self {
+        let hash = *blake3::hash(&chunk).as_bytes();
+        let length = chunk.len();
+        Self {
+            hash, 
+            length, 
+            chunk
+        }
+    }
 }
 
 struct Slicer {

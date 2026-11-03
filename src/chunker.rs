@@ -1,15 +1,16 @@
 #![allow(unused)]
+use blake3::Hasher;
+use bytes::{BufMut, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::net::TcpStream; 
+use std::sync::LazyLock;
+use crate::storage_engine::ChunkID; 
+
+
 const MIN_CHUNK: usize = 1 << 18; // 256KB 
 const AVG_CHUNK: usize = 1 << 20; // 1 MiB
 const MAX_CHUNK: usize = 4 << 20; // 4MiB
 const AVG_BITS: usize = 20;
-
-use blake3::Hasher;
-
-use bytes::BytesMut;
-use tokio::io::AsyncRead;
-use std::sync::LazyLock;
-
 
 fn generate_gear_table() -> [u64; 256] {
     std::array::from_fn(|byte| {
@@ -32,13 +33,52 @@ static GEAR_TABLE: LazyLock<[u64; 256]> = LazyLock::new(generate_gear_table);
 
 fn update_gear_hash(hash: u64, byte: u8) -> u64 {
     hash.wrapping_shl(1).wrapping_add(GEAR_TABLE[byte as usize])
+
 }
 
 fn is_chunk_boundary(fp: u64, mask: u64) -> bool {
     fp & mask == 0
 }
 
+pub async fn chunk(mut conn: TcpStream) {
+    let mut fingerprint: u64 = 0;
+    let mut chunk_length: usize = 0;
+    let mut chunk = BytesMut::with_capacity(AVG_CHUNK);
+    let mut read_buf = BytesMut::with_capacity(1 << 18);
+    let mut read: usize = 0;
 
-pub fn chunk() {
-    todo!()
+    loop {
+        let n = read_bytes(&mut read_buf, &mut conn).await;
+
+        if n  == 0 {
+            break
+        }
+
+        for byte in &read_buf[read..]{
+            fingerprint = update_gear_hash(fingerprint, *byte);
+
+            if chunk.len() <= MIN_CHUNK {
+                continue;
+            }
+
+            // if is_chunk_boundary(fingerprint, mask) {
+            //     let chunkid =  ChunkID::new(chunk, chunk_length);
+            // }
+
+            if chunk .len() >= MAX_CHUNK {
+                let completed = chunk.split().freeze();
+                let chunkid =  ChunkID::new(completed.to_vec());
+            } 
+            chunk.put_u8(*byte);
+
+        }
+
+        read += n
+
+    }
+}
+
+
+pub async fn read_bytes(buffer: &mut BytesMut, stream: &mut TcpStream) -> usize{
+    stream.read_buf(buffer).await.unwrap()
 }
