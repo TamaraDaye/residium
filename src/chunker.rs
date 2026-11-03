@@ -11,10 +11,6 @@ use tokio::io::AsyncRead;
 use std::sync::LazyLock;
 
 
-struct AsyncChunker<R: AsyncRead> {
-
-}
-
 fn generate_gear_table() -> [u64; 256] {
     std::array::from_fn(|byte| {
         let mut hasher = Hasher::new();
@@ -37,6 +33,11 @@ static GEAR_TABLE: LazyLock<[u64; 256]> = LazyLock::new(generate_gear_table);
 fn update_gear_hash(hash: u64, byte: u8) -> u64 {
     hash.wrapping_shl(1).wrapping_add(GEAR_TABLE[byte as usize])
 }
+
+fn is_chunk_boundary(fp: u64, mask: u64) -> bool {
+    fp & mask == 0
+}
+
 
 pub fn chunk() {
     todo!()
