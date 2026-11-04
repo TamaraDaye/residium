@@ -14,8 +14,8 @@ pub enum Entry {
 /// The packfiles are the durable source of truth for this local storage layer.
 /// In-memory indexes derived from the append-only packfiles.
 pub struct MemTable {
-    pub chunk_index: RwLock<BTreeMap<ChunkKey, DiskPointer>>,
-    pub object_index: RwLock<BTreeMap<ObjectKey, Entry>>,
+    pub chunk_index: BTreeMap<ChunkKey, DiskPointer>,
+    pub object_index: BTreeMap<ObjectKey, Entry>,
     pub active_pack: PackFile,
 }
 
@@ -53,14 +53,13 @@ struct ObjectChunks {
 }
 
 
-struct Object {
+pub struct Object {
     key: ObjectKey,
     chunks: ObjectChunks,
     manifest: ObjectManifest,
 }
 
-
-struct ObjectManifest {
+pub struct ObjectManifest {
     mime_type: String,
     creation_time: u64,
     object_size: u64,
@@ -93,9 +92,10 @@ pub struct Tombstone {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ChunkKey {
-    hash: [u8; 32],
-    length: usize,
+    pub hash: [u8; 32],
+    pub length: usize,
 }
+
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -106,12 +106,22 @@ pub enum RecordType {
 }
 
 pub struct Chunk {
-    key: ChunkKey,
-    chunk: Bytes,
+    pub key: ChunkKey,
+    pub chunk: Bytes,
+}
+
+impl Chunk {
+    pub fn new(bytes: Bytes) -> Self {
+        let key = ChunkKey::new(&bytes);
+        Self {
+            key , 
+            chunk: bytes
+        }
+    }
 }
 
 impl ChunkKey {
-    pub fn new(chunk: Bytes) -> Self {
+    pub fn new(chunk: &Bytes) -> Self {
         let hash = *blake3::hash(&chunk).as_bytes();
         let length = chunk.len();
         Self {
