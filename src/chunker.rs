@@ -1,8 +1,10 @@
 #![allow(unused)]
-use blake3::Hasher;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::{io, sync::LazyLock};
-use tokio::{io::AsyncReadExt, net::TcpStream, sync::mpsc};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    sync::mpsc,
+};
 
 const MIN_CHUNK: usize = 1 << 18; // 256 KiB
 const INITIAL_CHUNK_CAPACITY: usize = 1 << 20; // 1 MiB
@@ -14,6 +16,7 @@ const AVG_BITS: usize = 20;
 const MASK: u64 = (1u64 << AVG_BITS) - 1;
 
 fn generate_gear_table() -> [u64; 256] {
+    use blake3::Hasher;
     std::array::from_fn(|byte| {
         let mut hasher = Hasher::new();
 
@@ -32,35 +35,35 @@ fn generate_gear_table() -> [u64; 256] {
 
 static GEAR_TABLE: LazyLock<[u64; 256]> = LazyLock::new(generate_gear_table);
 
-pub struct Chunker { 
+pub struct Chunker {
     fingerprint: u64,
-    tx: mpsc::Sender<Bytes>
+    tx: mpsc::Sender<Bytes>,
 }
 
 impl Chunker {
-
     pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
-        Self {
-            fingerprint: 0, 
-            tx
-        }
+        Self { fingerprint: 0, tx }
     }
 
     fn update_gear_hash(&mut self, byte: u8) -> u64 {
-        self.fingerprint.wrapping_shl(1).wrapping_add(GEAR_TABLE[byte as usize])
+        self.fingerprint
+            .wrapping_shl(1)
+            .wrapping_add(GEAR_TABLE[byte as usize])
     }
 
     fn is_chunk_boundary(&self) -> bool {
         self.fingerprint & MASK == 0
     }
 
-    pub async fn chunk(&mut self, mut conn: TcpStream, ) -> io::Result<()> {
-
+    pub async fn chunk<R>(&mut self, reader: &mut R) -> io::Result<()>
+    where
+        R: AsyncRead + Unpin,
+    {
         let mut chunk = BytesMut::with_capacity(INITIAL_CHUNK_CAPACITY);
         let mut read_buf = BytesMut::with_capacity(READ_BUFFER_CAPACITY);
 
         loop {
-            let n = read_bytes(&mut read_buf, &mut conn).await?;
+            let n = read_bytes(&mut read_buf, reader).await?;
 
             if n == 0 {
                 break;
@@ -70,12 +73,11 @@ impl Chunker {
                 let byte = read_buf[i];
 
                 chunk.put_u8(byte);
+
                 self.fingerprint = self.update_gear_hash(byte);
 
-                let chunk_len = chunk.len();
-
-                let boundary = (chunk_len >= MIN_CHUNK && self.is_chunk_boundary())
-                    || chunk_len >= MAX_CHUNK;
+                let boundary = (chunk.len() >= MIN_CHUNK && self.is_chunk_boundary())
+                    || chunk.len() >= MAX_CHUNK;
 
                 if boundary {
                     let completed = chunk.split().freeze();
@@ -94,7 +96,8 @@ impl Chunker {
         if !chunk.is_empty() {
             let completed = chunk.freeze();
 
-            self.tx.send(completed)
+            self.tx
+                .send(completed)
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "chunk consumer closed"))?;
         }
@@ -103,6 +106,18 @@ impl Chunker {
     }
 }
 
-pub async fn read_bytes(buffer: &mut BytesMut, stream: &mut TcpStream) -> io::Result<usize> {
-    stream.read_buf(buffer).await
+pub async fn read_bytes<R>(buffer: &mut BytesMut, reader: &mut R) -> io::Result<usize>
+where
+    R: AsyncRead + Unpin,
+{
+    reader.read_buf(buffer).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk() { 
+    }
 }
