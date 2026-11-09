@@ -13,14 +13,14 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 
+//TODO: seperate object writer from chunk writer with queue for object manifests and introduce proper replies
+
 const CHUNK_QUEUE_CAPACITY: usize = 5;
 
 pub struct Engine {
     writers: Vec<WriteHandle>,
 }
 
-/// One object upload. `body` must be bounded to this object's bytes; EOF marks
-/// its end. `expected_size`, when present, is checked against bytes consumed.
 pub struct ObjectUpload<R> {
     pub key: ObjectKey,
     pub metadata: ObjectMetadata,
@@ -167,7 +167,7 @@ impl WriteHandle {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "writer dropped chunk reply"))?
     }
 
-    pub async fn put_manifest(&self, object: Object) -> io::Result<DiskPointer> {
+    pub async fn put_manifest(&self, object: Object) -> io::Result<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::PutManifest {
@@ -176,9 +176,7 @@ impl WriteHandle {
             })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "writer is closed"))?;
-        reply_rx.await.map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "writer dropped manifest reply")
-        })?
+        Ok(())
     }
 
     pub async fn sync(&self) -> io::Result<()> {

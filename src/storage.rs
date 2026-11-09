@@ -164,16 +164,16 @@ pub enum RecordType {
     ObjectManifest = 2,
     Tombstone = 3,
 }
-
+#[derive(Serialize, Deserialize)]
 pub struct Chunk {
     pub key: ChunkKey,
-    pub chunk: Bytes,
+    pub chunk: Vec<u8>,
 }
 
 impl Chunk {
     pub fn new(bytes: Bytes) -> Self {
         let key = ChunkKey::new(&bytes);
-        Self { key, chunk: bytes }
+        Self { key, chunk: bytes.to_vec()}
     }
 }
 
