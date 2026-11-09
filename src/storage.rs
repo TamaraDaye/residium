@@ -11,8 +11,6 @@ pub enum Entry {
     Ptr(DiskPointer),
 }
 
-const SEGMENT_SIZE: usize = 512 << 20;
-
 pub struct MemTable {
     pub chunk_index: BTreeMap<ChunkKey, DiskPointer>,
     pub object_index: BTreeMap<ObjectKey, Entry>,
@@ -97,14 +95,6 @@ impl Object {
         }
     }
 }
-
-pub struct DiskPointer {
-    pub segment_id: u32,
-    pub offset: u64,
-    pub record_size: u64,
-    pub writer_id: u32,
-}
-
 pub struct PackFile<F: AsyncWrite + Unpin> {
     pub pack: F,
     pub segment_id: u32,
@@ -114,7 +104,7 @@ pub struct PackFile<F: AsyncWrite + Unpin> {
 }
 
 impl<F: AsyncWrite + Unpin> PackFile<F> {
-    fn new(writer: F, writer_id: u32) -> Self {
+    pub fn new(writer: F, writer_id: u32) -> Self {
         Self {
             pack: writer,
             segment_id: 0,
@@ -124,23 +114,35 @@ impl<F: AsyncWrite + Unpin> PackFile<F> {
         }
     }
 
-    async fn write_data(&mut self, data: &[u8]) -> io::Result<DiskPointer> {
-        let offset = self.offset;
-
+    pub async fn write_data(&mut self, data: &[u8]) -> io::Result<DiskPointer> {
         let dp = DiskPointer {
             segment_id: self.segment_id,
-            offset: offset as u64,
+            offset: self.offset as u64,
             record_size: data.len() as u64,
             writer_id: self.writer_id,
         };
 
-        self.pack.write_all(data).await;
+        self.pack.write_all(data).await?; 
         self.offset += data.len();
         self.size += data.len();
 
         Ok(dp)
     }
+
+    pub fn reset_segment(&mut self, next_writer: F, next_segment_id: u32) {
+        self.pack = next_writer;
+        self.segment_id = next_segment_id;
+        self.offset = 0;
+        self.size = 0;
+    }
 }
+pub struct DiskPointer {
+    pub segment_id: u32,
+    pub offset: u64,
+    pub record_size: u64,
+    pub writer_id: u32,
+}
+
 
 #[derive(Serialize, Deserialize)]
 pub struct Tombstone {
