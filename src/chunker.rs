@@ -1,3 +1,4 @@
+//TODO: use batched writes to make writes efficient and faster can afford buf writer
 #![allow(unused)]
 use bytes::{BufMut, Bytes, BytesMut};
 use std::{io, sync::LazyLock};
@@ -118,6 +119,5 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chunk() { 
-    }
+    fn chunk() {}
 }

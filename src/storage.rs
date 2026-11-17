@@ -122,7 +122,7 @@ impl<F: AsyncWrite + Unpin> PackFile<F> {
             writer_id: self.writer_id,
         };
 
-        self.pack.write_all(data).await?; 
+        self.pack.write_all(data).await?;
         self.offset += data.len();
         self.size += data.len();
 
@@ -142,7 +142,6 @@ pub struct DiskPointer {
     pub record_size: u64,
     pub writer_id: u32,
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct Tombstone {
@@ -173,7 +172,10 @@ pub struct Chunk {
 impl Chunk {
     pub fn new(bytes: Bytes) -> Self {
         let key = ChunkKey::new(&bytes);
-        Self { key, chunk: bytes.to_vec()}
+        Self {
+            key,
+            chunk: bytes.to_vec(),
+        }
     }
 }
 

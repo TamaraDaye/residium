@@ -39,7 +39,6 @@ impl SegmentIo for File {
     }
 }
 
-// In-memory mock for unit tests
 impl SegmentIo for io::Cursor<Vec<u8>> {
     async fn open(_dir: Option<&Path>, _writer_id: u32, _segment_id: u32) -> io::Result<Self> {
         Ok(io::Cursor::new(Vec::new()))

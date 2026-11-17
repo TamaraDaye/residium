@@ -1,8 +1,6 @@
 #![allow(unused)]
 use crate::chunker::Chunker;
-use crate::storage::{
-    Chunk, ChunkKey, DiskPointer, Object, ObjectKey, ObjectMetadata, Tombstone,
-};
+use crate::storage::{Chunk, ChunkKey, DiskPointer, Object, ObjectKey, ObjectMetadata, Tombstone};
 use crate::writer::WriterCommand;
 use std::{
     io,
@@ -17,8 +15,14 @@ use tokio::{
 
 const CHUNK_QUEUE_CAPACITY: usize = 5;
 
+pub enum HashType {
+    Object,
+    Chunk,
+}
+
 pub struct Engine {
-    writers: Vec<WriteHandle>,
+    chunk_writers: Vec<WriteHandle>,
+    manifest_writers: Vec<WriteHandle>,
 }
 
 pub struct ObjectUpload<R> {
@@ -33,7 +37,7 @@ impl Engine {
     where
         R: AsyncRead + Unpin,
     {
-        if self.writers.is_empty() {
+        if self.chunk_writers.is_empty() || self.manifest_writers.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "no storage writers configured",
@@ -71,7 +75,7 @@ impl Engine {
             let mut chunk_keys = Vec::new();
             let mut object_size = 0u64;
             let mut checksum = blake3::Hasher::new();
-            let mut touched_writers = vec![false; self.writers.len()];
+            let mut touched_writers = vec![false; self.chunk_writers.len()];
 
             while let Some(bytes) = rx.recv().await {
                 object_size = object_size.checked_add(bytes.len() as u64).ok_or_else(|| {
@@ -81,9 +85,9 @@ impl Engine {
 
                 let chunk = Chunk::new(bytes);
                 let chunk_key = chunk.key;
-                let writer_index = self.writer_for_hash(&chunk_key.hash);
+                let writer_index = self.writer_for_hash(&chunk_key.hash, HashType::Chunk);
 
-                self.writers[writer_index].send_chunk(chunk).await?;
+                self.chunk_writers[writer_index].send_chunk(chunk).await?;
                 touched_writers[writer_index] = true;
                 chunk_keys.push(chunk_key);
             }
@@ -111,7 +115,7 @@ impl Engine {
 
         for (index, touched) in touched_writers.into_iter().enumerate() {
             if touched {
-                self.writers[index].sync().await?;
+                self.chunk_writers[index].sync().await?;
             }
         }
 
@@ -128,9 +132,9 @@ impl Engine {
             creation_time,
         );
 
-        let object_writer = self.writer_for_hash(blake3::hash(key.as_str().as_bytes()).as_bytes());
-        self.writers[object_writer].put_manifest(object).await?;
-        self.writers[object_writer].sync().await?;
+        let key = blake3::hash(key.as_str().as_bytes());
+
+        let manifest_writer = self.writer_for_hash(key.as_bytes(), HashType::Object);
 
         Ok(())
     }
@@ -141,9 +145,19 @@ impl Engine {
 }
 
 impl Engine {
-    fn writer_for_hash(&self, hash: &[u8; 32]) -> usize {
-        let selector = u64::from_be_bytes(hash[..8].try_into().expect("hash prefix is 8 bytes"));
-        (selector % self.writers.len() as u64) as usize
+    fn writer_for_hash(&self, hash: &[u8; 32], hash_type: HashType) -> usize {
+        match hash_type {
+            HashType::Chunk => {
+                let selector =
+                    u64::from_be_bytes(hash[..8].try_into().expect("hash prefix is 8 bytes"));
+                (selector % self.chunk_writers.len() as u64) as usize
+            }
+            HashType::Object => {
+                let selector =
+                    u64::from_be_bytes(hash[..8].try_into().expect("hash prefix is 8 bytes"));
+                (selector % self.manifest_writers.len() as u64) as usize
+            }
+        }
     }
 }
 
@@ -190,4 +204,3 @@ impl WriteHandle {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "writer dropped sync reply"))?
     }
 }
-
